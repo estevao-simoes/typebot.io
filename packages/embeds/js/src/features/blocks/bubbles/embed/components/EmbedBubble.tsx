@@ -4,10 +4,13 @@ import { createSignal, onCleanup, onMount } from 'solid-js'
 import { clsx } from 'clsx'
 import { EmbedBubbleBlock } from '@typebot.io/schemas'
 import { defaultEmbedBubbleContent } from '@typebot.io/schemas/features/blocks/bubbles/embed/constants'
+import { isNotEmpty } from '@typebot.io/lib/utils'
+import { InputSubmitContent } from '@/types'
 
 type Props = {
   content: EmbedBubbleBlock['content']
   onTransitionEnd?: (ref?: HTMLDivElement) => void
+  onCompleted?: (data?: InputSubmitContent) => void
 }
 
 let typingTimeout: NodeJS.Timeout
@@ -20,9 +23,32 @@ export const EmbedBubble = (props: Props) => {
     props.onTransitionEnd ? true : false
   )
 
+  const handleMessage = (
+    event: MessageEvent<{ name?: string; data?: string }>
+  ) => {
+    if (
+      props.content?.waitForEvent?.isEnabled &&
+      isNotEmpty(event.data.name) &&
+      event.data.name === props.content?.waitForEvent.name
+    ) {
+      props.onCompleted?.(
+        props.content.waitForEvent.saveDataInVariableId && event.data.data
+          ? {
+              type: 'text',
+              value: event.data.data,
+            }
+          : undefined
+      )
+      window.removeEventListener('message', handleMessage)
+    }
+  }
+
   onMount(() => {
     typingTimeout = setTimeout(() => {
       setIsTyping(false)
+      if (props.content?.waitForEvent?.isEnabled) {
+        window.addEventListener('message', handleMessage)
+      }
       setTimeout(() => {
         props.onTransitionEnd?.(ref)
       }, showAnimationDuration)
@@ -31,6 +57,7 @@ export const EmbedBubble = (props: Props) => {
 
   onCleanup(() => {
     if (typingTimeout) clearTimeout(typingTimeout)
+    window.removeEventListener('message', handleMessage)
   })
 
   return (

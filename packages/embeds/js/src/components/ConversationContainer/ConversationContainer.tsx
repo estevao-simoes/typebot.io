@@ -3,6 +3,8 @@ import {
   InputBlock,
   Theme,
   ChatLog,
+  StartChatResponse,
+  Message,
 } from '@typebot.io/schemas'
 import {
   createEffect,
@@ -17,7 +19,7 @@ import { ChatChunk } from './ChatChunk'
 import {
   BotContext,
   ChatChunk as ChatChunkType,
-  InitialChatReply,
+  InputSubmitContent,
   OutgoingLog,
 } from '@/types'
 import { isNotDefined } from '@typebot.io/lib'
@@ -29,10 +31,10 @@ import {
   formattedMessages,
   setFormattedMessages,
 } from '@/utils/formattedMessagesSignal'
-import { InputBlockType } from '@typebot.io/schemas/features/blocks/inputs/constants'
 import { saveClientLogsQuery } from '@/queries/saveClientLogsQuery'
 import { HTTPError } from 'ky'
 import { persist } from '@/utils/persist'
+import { getAnswerContent } from '@/utils/getAnswerContent'
 
 const autoScrollBottomToleranceScreenPercent = 0.6
 const bottomSpacerHeight = 128
@@ -62,7 +64,7 @@ const parseDynamicTheme = (
 })
 
 type Props = {
-  initialChatReply: InitialChatReply
+  initialChatReply: StartChatResponse
   context: BotContext
   onNewInputBlock?: (inputBlock: InputBlock) => void
   onAnswer?: (answer: { message: string; blockId: string }) => void
@@ -73,7 +75,7 @@ type Props = {
 
 export const ConversationContainer = (props: Props) => {
   let chatContainer: HTMLDivElement | undefined
-  const [chatChunks, setChatChunks, isRecovered] = persist(
+  const [chatChunks, setChatChunks, isRecovered, setIsRecovered] = persist(
     createSignal<ChatChunkType[]>([
       {
         input: props.initialChatReply.input,
@@ -131,29 +133,26 @@ export const ConversationContainer = (props: Props) => {
     )
   })
 
-  const sendMessage = async (
-    message: string | undefined,
-    clientLogs?: ChatLog[]
-  ) => {
-    if (clientLogs) {
-      props.onNewLogs?.(clientLogs)
-      await saveClientLogsQuery({
-        apiHost: props.context.apiHost,
-        sessionId: props.initialChatReply.sessionId,
-        clientLogs,
-      })
-    }
+  const saveLogs = async (clientLogs?: ChatLog[]) => {
+    if (!clientLogs) return
+    props.onNewLogs?.(clientLogs)
+    if (props.context.isPreview) return
+    await saveClientLogsQuery({
+      apiHost: props.context.apiHost,
+      sessionId: props.initialChatReply.sessionId,
+      clientLogs,
+    })
+  }
+
+  const sendMessage = async (answer?: InputSubmitContent) => {
+    setIsRecovered(false)
     setHasError(false)
     const currentInputBlock = [...chatChunks()].pop()?.input
-    if (currentInputBlock?.id && props.onAnswer && message)
-      props.onAnswer({ message, blockId: currentInputBlock.id })
-    if (currentInputBlock?.type === InputBlockType.FILE)
-      props.onNewLogs?.([
-        {
-          description: 'Files are not uploaded in preview mode',
-          status: 'info',
-        },
-      ])
+    if (currentInputBlock?.id && props.onAnswer && answer)
+      props.onAnswer({
+        message: getAnswerContent(answer),
+        blockId: currentInputBlock.id,
+      })
     const longRequest = setTimeout(() => {
       setIsSending(true)
     }, 1000)
@@ -161,7 +160,7 @@ export const ConversationContainer = (props: Props) => {
     const { data, error } = await continueChatQuery({
       apiHost: props.context.apiHost,
       sessionId: props.initialChatReply.sessionId,
-      message,
+      message: convertSubmitContentToMessage(answer),
     })
     clearTimeout(longRequest)
     setIsSending(false)
@@ -288,9 +287,14 @@ export const ConversationContainer = (props: Props) => {
         },
         onMessageStream: streamMessage,
       })
+      if (response && 'logs' in response) saveLogs(response.logs)
       if (response && 'replyToSend' in response) {
         setIsSending(false)
-        sendMessage(response.replyToSend, response.logs)
+        sendMessage(
+          response.replyToSend
+            ? { type: 'text', value: response.replyToSend }
+            : undefined
+        )
         return
       }
       if (response && 'blockedPopupUrl' in response)
@@ -354,11 +358,22 @@ export const ConversationContainer = (props: Props) => {
   )
 }
 
-const BottomSpacer = () => {
-  return (
-    <div
-      class="w-full flex-shrink-0"
-      style={{ height: bottomSpacerHeight + 'px' }}
-    />
-  )
+const BottomSpacer = () => (
+  <div
+    class="w-full flex-shrink-0 typebot-bottom-spacer"
+    style={{ height: bottomSpacerHeight + 'px' }}
+  />
+)
+
+const convertSubmitContentToMessage = (
+  answer: InputSubmitContent | undefined
+): Message | undefined => {
+  if (!answer) return
+  if (answer.type === 'text')
+    return {
+      type: 'text',
+      text: answer.value,
+      attachedFileUrls: answer.attachments?.map((attachment) => attachment.url),
+    }
+  if (answer.type === 'recording') return { type: 'audio', url: answer.url }
 }

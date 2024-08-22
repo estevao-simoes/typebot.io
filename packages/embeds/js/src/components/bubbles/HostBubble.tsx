@@ -4,6 +4,7 @@ import { CustomEmbedBubble } from '@/features/blocks/bubbles/embed/components/Cu
 import { ImageBubble } from '@/features/blocks/bubbles/image'
 import { TextBubble } from '@/features/blocks/bubbles/textBubble'
 import { VideoBubble } from '@/features/blocks/bubbles/video'
+import { InputSubmitContent } from '@/types'
 import type {
   AudioBubbleBlock,
   ChatMessage,
@@ -22,7 +23,7 @@ type Props = {
   typingEmulation: Settings['typingEmulation']
   isTypingSkipped: boolean
   onTransitionEnd?: (ref?: HTMLDivElement) => void
-  onCompleted: (reply?: string) => void
+  onCompleted: (reply?: InputSubmitContent) => void
 }
 
 export const HostBubble = (props: Props) => (
@@ -51,6 +52,7 @@ export const HostBubble = (props: Props) => (
       <EmbedBubble
         content={props.message.content as EmbedBubbleBlock['content']}
         onTransitionEnd={props.onTransitionEnd}
+        onCompleted={props.onCompleted}
       />
     </Match>
     <Match when={props.message.type === 'custom-embed'}>
